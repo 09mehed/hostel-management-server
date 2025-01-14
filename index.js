@@ -1,7 +1,7 @@
 const express = require('express')
 const cors = require('cors')
 require('dotenv').config()
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cookieParser = require('cookie-parser')
 const jwt = require('jsonwebtoken')
 const app = express()
@@ -12,7 +12,11 @@ app.use(express.json())
 app.use(cookieParser())
 
 const verifyToken = async (req, res, next) => {
-  const token = req.cookies?.token
+  const token = req.headers.authorization.split(' ')[1]
+
+  if(!req.headers.authorization){
+    return res.status(401).send({message: 'forbidden access'})
+  }
 
   if (!token) {
     return res.status(401).send({ message: 'unauthorized access' })
@@ -45,10 +49,51 @@ async function run() {
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
 
-    const usersCollection = client.db('hostelDB').collection('user')
+    const usersCollection = client.db('hostelDB').collection('users')
     const mealCollection = client.db('hostelDB').collection('meal')
 
-    app.
+    // users related apis
+    app.post('/users', async (req, res) => {
+      const user = req.body
+      const query = { email: user.email }
+      const existingUser = await usersCollection.findOne(query)
+      if (existingUser) {
+        return res.send("User Already exist")
+      }
+      const result = await usersCollection.insertOne(user)
+      res.send(result)
+    })
+
+    app.get('/users', verifyToken, async (req, res) => {
+      const result = await usersCollection.find().toArray()
+      res.send(result)
+    })
+
+    app.patch('/users/admin/:id', async (req, res) => {
+      const id = req.params.id
+      const filter = { _id: new ObjectId(id) }
+      const updatedDoc = {
+        $set: {
+          role: 'admin'
+        }
+      }
+      const result = await usersCollection.updateOne(filter, updatedDoc)
+      res.send(result)
+    })
+
+    app.get('/users/admin/:email',verifyToken, async(req, res) => {
+      const email = req.params.email
+      if(email !== req.decoded.email){
+        return res.status(403).send({message: 'Unauthorized access'})
+      }
+      const query = { email: email }
+      const user = await usersCollection.findOne(query)
+      let admin = false
+      if(user){
+        admin = user?.role === 'admin'
+      }
+      res.send({ admin })
+    })
 
     // Generate jwt token
     app.post('/jwt', async (req, res) => {
