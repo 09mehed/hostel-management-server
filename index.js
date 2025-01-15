@@ -12,21 +12,21 @@ app.use(express.json())
 app.use(cookieParser())
 
 const verifyToken = async (req, res, next) => {
-  const token = req.headers.authorization.split(' ')[1]
-
-  if(!req.headers.authorization){
-    return res.status(401).send({message: 'forbidden access'})
+  if (!req.headers.authorization) {
+    return res.status(401).send({ message: 'forbidden access' })
   }
 
+  const token = req.headers.authorization.split(' ')[1]
   if (!token) {
-    return res.status(401).send({ message: 'unauthorized access' })
+    console.log('Token missing in authorization header');
+    return res.status(401).send({ message: 'forbidden access' });
   }
   jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
     if (err) {
       console.log(err)
       return res.status(401).send({ message: 'unauthorized access' })
     }
-    req.user = decoded
+    req.decoded = decoded
     next()
   })
 }
@@ -50,7 +50,21 @@ async function run() {
     await client.db("admin").command({ ping: 1 });
 
     const usersCollection = client.db('hostelDB').collection('users')
-    const mealCollection = client.db('hostelDB').collection('meal')
+    const mealCollection = client.db('hostelDB').collection('meals')
+    const packageCollection = client.db('hostelDB').collection('packages')
+
+    // verify admin
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded.email
+      const query = { email: email }
+      const user = await usersCollection.findOne(query)
+      const isAdmin = user?.admin === 'admin'
+      if (!isAdmin) {
+        return res.status(403).send({ message: 'forbidden access' })
+      }
+      next()
+    }
+
 
     // users related apis
     app.post('/users', async (req, res) => {
@@ -64,12 +78,12 @@ async function run() {
       res.send(result)
     })
 
-    app.get('/users', verifyToken, async (req, res) => {
+    app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
       const result = await usersCollection.find().toArray()
       res.send(result)
     })
 
-    app.patch('/users/admin/:id', async (req, res) => {
+    app.patch('/users/admin/:id', verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id
       const filter = { _id: new ObjectId(id) }
       const updatedDoc = {
@@ -81,33 +95,139 @@ async function run() {
       res.send(result)
     })
 
-    app.get('/users/admin/:email',verifyToken, async(req, res) => {
+    app.get('/users/admin/:email', verifyToken, async (req, res) => {
       const email = req.params.email
-      if(email !== req.decoded.email){
-        return res.status(403).send({message: 'Unauthorized access'})
+      if (email !== req.decoded.email) {
+        return res.status(403).send({ message: 'Unauthorized access' })
       }
       const query = { email: email }
       const user = await usersCollection.findOne(query)
       let admin = false
-      if(user){
+      if (user) {
         admin = user?.role === 'admin'
       }
       res.send({ admin })
     })
 
+    app.get('/users/role/:email', async (req, res) => {
+      const email = req.params.email
+      const query = { email }
+      const result = await usersCollection.findOne(query)
+      res.send({ role: result?.role })
+    })
+
+    // meal api
+    app.get('/meal', async (req, res) => {
+      const result = await mealCollection.find().toArray()
+      res.send(result)
+    })
+
+    app.post('/meal', verifyToken, verifyAdmin, async (req, res) => {
+      const item = req.body
+      const result = await mealCollection.insertOne(item)
+      res.send(result)
+    })
+
+    app.delete('/meal/:id', verifyToken, async (req, res) => {
+      const id = req.params.id
+      const query = { _id: new ObjectId(id) }
+      const result = await mealCollection.deleteOne(query)
+      res.send(result)
+    })
+
+    app.get('/meal/:id', async (req, res) => {
+      const id = req.params.id
+      const query = { _id: new ObjectId(id) }
+      const result = await mealCollection.findOne(query)
+      res.send(result)
+    })
+
+    app.patch('/meal/like/:id', verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const meal = await mealCollection.findOne(query);
+
+      if (!meal) {
+        return res.status(404).send({ message: "Meal not found" });
+      }
+
+      const updatedDoc = {
+        $inc: { likes: 1 }
+      };
+
+      const result = await mealCollection.updateOne(filter, updatedDoc);
+      res.send(result);
+    });
+
+    app.post('/meal/request/:id', verifyToken, async (req, res) => {
+      const { userId, packageId } = req.body;
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const meal = await mealCollection.findOne(query);
+
+      if (!meal) {
+        return res.status(404).send({ message: "Meal not found" });
+      }
+      const userPackage = await packageCollection.findOne({ userId, packageId });
+      if (!userPackage) {
+        return res.status(400).send({ message: "Subscription required to request meal" });
+      }
+
+      const updatedDoc = {
+        $set: {
+          requestStatus: 'pending',
+          requestedBy: userId
+        }
+      };
+
+      const result = await mealCollection.updateOne(query, updatedDoc);
+      res.send(result);
+    });
+
+    app.post('/meal/review/:id', verifyToken, async (req, res) => {
+      const { reviewText } = req.body;
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+
+      const meal = await mealCollection.findOne(query);
+      if (!meal) {
+        return res.status(404).send({ message: "Meal not found" });
+      }
+
+      const updatedDoc = {
+        $push: { reviews: reviewText }
+      };
+
+      const result = await mealCollection.updateOne(query, updatedDoc);
+      res.send(result);
+    });
+
+    app.get('/meal/reviews/:id', async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+  
+      const meal = await mealCollection.findOne(query);
+      if (!meal) {
+          return res.status(404).send({ message: "Meal not found" });
+      }
+  
+      res.send({ reviews: meal.reviews || [] });
+  });
+
     // Generate jwt token
     app.post('/jwt', async (req, res) => {
-      const email = req.body
-      const token = jwt.sign(email, process.env.ACCESS_TOKEN_SECRET, {
+      const user = req.body
+      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
         expiresIn: '365d',
       })
-      res
-        .cookie('token', token, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
-        })
-        .send({ success: true })
+      // res
+      //   .cookie('token', token, {
+      //     httpOnly: true,
+      //     secure: process.env.NODE_ENV === 'production',
+      //     sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+      //   })
+      //   .send({ success: true })
+      res.send({ token })
     })
     // Logout
     app.get('/logout', async (req, res) => {
