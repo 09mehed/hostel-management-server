@@ -52,15 +52,15 @@ async function run() {
     const usersCollection = client.db('hostelDB').collection('users')
     const mealCollection = client.db('hostelDB').collection('meals')
     const packageCollection = client.db('hostelDB').collection('packages')
+    const requestCollection = client.db('hostelDB').collection('requests')
 
     // verify admin
     const verifyAdmin = async (req, res, next) => {
       const email = req.decoded.email
       const query = { email: email }
-      const user = await usersCollection.findOne(query)
-      const isAdmin = user?.admin === 'admin'
-      if (!isAdmin) {
-        return res.status(403).send({ message: 'forbidden access' })
+      const result = await usersCollection.findOne(query)
+      if (!result || result?.admin === 'admin') {
+        return res.status(401).status({ message: 'forbidden access' })
       }
       next()
     }
@@ -142,47 +142,79 @@ async function run() {
       res.send(result)
     })
 
+    app.get('/upcoming-meals', async (req, res) => {
+      const currentDate = new Date();
+      const query = { publishDate: { $gt: currentDate } }; // Meals with future publishDate
+      const result = await mealCollection.find(query).toArray();
+      res.send(result);
+  });
+
+    app.get('/meal', async (req, res) => {
+      const { search = '', category = '', minPrice = 0, maxPrice = Infinity } = req.query;
+
+      try {
+        const meals = await mealCollection.find({
+          name: { $regex: search, $options: 'i' }, 
+          category: category ? category : { $exists: true }, 
+          price: { $gte: parseFloat(minPrice), $lte: parseFloat(maxPrice) }
+        }).toArray();
+
+        res.status(200).json(meals);
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Error fetching meals" });
+      }
+    });
+
+
     app.patch('/meal/like/:id', verifyToken, async (req, res) => {
-      const id = req.params.id;
-      const filter = { _id: new ObjectId(id) };
-      const meal = await mealCollection.findOne(query);
-
-      if (!meal) {
-        return res.status(404).send({ message: "Meal not found" });
+      const mealId = req.params.id;
+      const email = req.decoded.email;
+  
+      // Get user info to verify premium status
+      const user = await usersCollection.findOne({ email });
+      if (!user || !['Silver', 'Gold', 'Platinum'].includes(user.subscription)) {
+          return res.status(403).send({ message: "Only premium users can like meals" });
       }
-
-      const updatedDoc = {
-        $inc: { likes: 1 }
+  
+      const filter = { _id: new ObjectId(mealId) };
+      const meal = await mealCollection.findOne(filter);
+  
+      if (!meal) {
+          return res.status(404).send({ message: "Meal not found" });
+      }
+  
+      if (meal.likedUsers?.includes(email)) {
+          return res.status(400).send({ message: "You have already liked this meal" });
+      }
+  
+      const updateDoc = {
+          $inc: { likes: 1 },
+          $push: { likedUsers: email },
       };
+  
+      const result = await mealCollection.updateOne(filter, updateDoc);
+      res.send(result);
+  });
 
-      const result = await mealCollection.updateOne(filter, updatedDoc);
+
+    app.post('/request', verifyToken, async (req, res) => {
+      const requestInfo = req.body
+      const result = await requestCollection.insertOne(requestInfo);
       res.send(result);
     });
 
-    app.post('/meal/request/:id', verifyToken, async (req, res) => {
-      const { userId, packageId } = req.body;
-      const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const meal = await mealCollection.findOne(query);
+    app.get('/request', async (req, res) => {
+      const result = await requestCollection.find().toArray()
+      res.send(result)
+    })
 
-      if (!meal) {
-        return res.status(404).send({ message: "Meal not found" });
-      }
-      const userPackage = await packageCollection.findOne({ userId, packageId });
-      if (!userPackage) {
-        return res.status(400).send({ message: "Subscription required to request meal" });
-      }
-
-      const updatedDoc = {
-        $set: {
-          requestStatus: 'pending',
-          requestedBy: userId
-        }
-      };
-
-      const result = await mealCollection.updateOne(query, updatedDoc);
-      res.send(result);
-    });
+    app.get('/student-order/:email', async (req, res) => {
+      const email = req.query.email
+      const query = { email: email }
+      const result = await requestCollection.find(query).toArray()
+      res.send(result)
+    })
 
     app.post('/meal/review/:id', verifyToken, async (req, res) => {
       const { reviewText } = req.body;
@@ -205,14 +237,30 @@ async function run() {
     app.get('/meal/reviews/:id', async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
-  
+
       const meal = await mealCollection.findOne(query);
       if (!meal) {
-          return res.status(404).send({ message: "Meal not found" });
+        return res.status(404).send({ message: "Meal not found" });
       }
-  
+
       res.send({ reviews: meal.reviews || [] });
-  });
+    });
+
+    // packages api
+    app.get('/packages', async (req, res) => {
+      const result = await packageCollection.find().toArray()
+      res.send(result)
+    })
+
+    app.post('/packages', async (req, res) => {
+      const user = req.body
+      const query = { email: user.email }
+      const result = await packageCollection.findOne(query)
+      res.send(result)
+    })
+
+
+
 
     // Generate jwt token
     app.post('/jwt', async (req, res) => {
