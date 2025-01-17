@@ -4,6 +4,7 @@ require('dotenv').config()
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cookieParser = require('cookie-parser')
 const jwt = require('jsonwebtoken')
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const app = express()
 const port = process.env.PORT || 5000
 
@@ -147,15 +148,15 @@ async function run() {
       const query = { publishDate: { $gt: currentDate } }; // Meals with future publishDate
       const result = await mealCollection.find(query).toArray();
       res.send(result);
-  });
+    });
 
     app.get('/meal', async (req, res) => {
       const { search = '', category = '', minPrice = 0, maxPrice = Infinity } = req.query;
 
       try {
         const meals = await mealCollection.find({
-          name: { $regex: search, $options: 'i' }, 
-          category: category ? category : { $exists: true }, 
+          name: { $regex: search, $options: 'i' },
+          category: category ? category : { $exists: true },
           price: { $gte: parseFloat(minPrice), $lte: parseFloat(maxPrice) }
         }).toArray();
 
@@ -166,36 +167,73 @@ async function run() {
       }
     });
 
+    app.get('/meal/like/:id', verifyToken, async (req, res) => {
+      const mealId = req.params.id;
+      const email = req.decoded.email;
+
+      const meal = await mealCollection.findOne({ _id: new ObjectId(mealId), likedUsers: email });
+      if (meal) {
+        return res.send({ liked: true });
+      }
+      res.send({ liked: false });
+    });
+
+
+    // app.patch('/meal/like/:id', verifyToken, async (req, res) => {
+    //   const mealId = req.params.id;
+    //   const email = req.decoded.email;
+
+    //   const user = await usersCollection.findOne({ email });
+    //   if (!user || !['Silver', 'Gold', 'Platinum'].includes(user.subscription)) {
+    //     return res.status(403).send({ message: "Only premium users can like meals" });
+    //   }
+
+    //   const meal = await mealCollection.findOne({ _id: new ObjectId(mealId) });
+    //   if (!meal) {
+    //     return res.status(404).send({ message: "Meal not found" });
+    //   }
+
+    //   if (meal.likedUsers?.includes(email)) {
+    //     return res.status(400).send({ message: "You have already liked this meal" });
+    //   }
+
+    //   const updateDoc = {
+    //     $inc: { likes: 1 },
+    //     $push: { likedUsers: email },
+    //   };
+
+    //   const result = await mealCollection.updateOne({ _id: new ObjectId(mealId) }, updateDoc);
+    //   res.send(result);
+    // });
 
     app.patch('/meal/like/:id', verifyToken, async (req, res) => {
       const mealId = req.params.id;
-      const email = req.decoded.email;
-  
-      // Get user info to verify premium status
-      const user = await usersCollection.findOne({ email });
-      if (!user || !['Silver', 'Gold', 'Platinum'].includes(user.subscription)) {
-          return res.status(403).send({ message: "Only premium users can like meals" });
+      const email = req.decoded.email; 
+
+      try {
+       
+        const meal = await mealCollection.findOne({ _id: new ObjectId(mealId) });
+
+        if (meal.likedUsers?.includes(email)) {
+          return res.status(400).send({ message: "User already liked this meal." });
+        }
+
+        
+        const updatedMeal = await mealCollection.updateOne(
+          { _id: new ObjectId(mealId) },
+          {
+            $inc: { like: 1 }, 
+            $push: { likedUsers: email }, 
+          }
+        );
+
+        res.send({ success: true, message: "Meal liked successfully." });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ success: false, message: "Failed to like the meal." });
       }
-  
-      const filter = { _id: new ObjectId(mealId) };
-      const meal = await mealCollection.findOne(filter);
-  
-      if (!meal) {
-          return res.status(404).send({ message: "Meal not found" });
-      }
-  
-      if (meal.likedUsers?.includes(email)) {
-          return res.status(400).send({ message: "You have already liked this meal" });
-      }
-  
-      const updateDoc = {
-          $inc: { likes: 1 },
-          $push: { likedUsers: email },
-      };
-  
-      const result = await mealCollection.updateOne(filter, updateDoc);
-      res.send(result);
-  });
+    });
+
 
 
     app.post('/request', verifyToken, async (req, res) => {
@@ -259,8 +297,30 @@ async function run() {
       res.send(result)
     })
 
+    app.get('/packages/:packageName', async (req, res) => {
+      const { packageName } = req.params;
+      const result = await packageCollection.findOne({ name: packageName });
+      if (!result) {
+        return res.status(404).send({ message: 'Package not found' });
+      }
+      res.send(result);
+    });
 
 
+
+    // payment(
+    app.post('/create-payment-intent', async(req, res) => {
+      const {price} = req.body
+      const amount = parseInt(price * 100)
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: 'usd',
+        payment_method_types: ['card']
+      })
+      res.send({
+        clientSecret: paymentIntent.client_secret,
+      })
+    })
 
     // Generate jwt token
     app.post('/jwt', async (req, res) => {
