@@ -171,59 +171,39 @@ async function run() {
       const mealId = req.params.id;
       const email = req.decoded.email;
 
-      const meal = await mealCollection.findOne({ _id: new ObjectId(mealId), likedUsers: email });
-      if (meal) {
-        return res.send({ liked: true });
+      try {
+        const meal = await mealCollection.findOne({
+          _id: new ObjectId(mealId),
+          likedUsers: { $in: [email] }, // Check if user already liked
+        });
+
+        if (meal) {
+          return res.send({ liked: true }); // User has already liked
+        }
+
+        res.send({ liked: false });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ success: false, message: "Error checking like status." });
       }
-      res.send({ liked: false });
     });
-
-
-    // app.patch('/meal/like/:id', verifyToken, async (req, res) => {
-    //   const mealId = req.params.id;
-    //   const email = req.decoded.email;
-
-    //   const user = await usersCollection.findOne({ email });
-    //   if (!user || !['Silver', 'Gold', 'Platinum'].includes(user.subscription)) {
-    //     return res.status(403).send({ message: "Only premium users can like meals" });
-    //   }
-
-    //   const meal = await mealCollection.findOne({ _id: new ObjectId(mealId) });
-    //   if (!meal) {
-    //     return res.status(404).send({ message: "Meal not found" });
-    //   }
-
-    //   if (meal.likedUsers?.includes(email)) {
-    //     return res.status(400).send({ message: "You have already liked this meal" });
-    //   }
-
-    //   const updateDoc = {
-    //     $inc: { likes: 1 },
-    //     $push: { likedUsers: email },
-    //   };
-
-    //   const result = await mealCollection.updateOne({ _id: new ObjectId(mealId) }, updateDoc);
-    //   res.send(result);
-    // });
 
     app.patch('/meal/like/:id', verifyToken, async (req, res) => {
       const mealId = req.params.id;
-      const email = req.decoded.email; 
+      const email = req.decoded.email;
 
       try {
-       
         const meal = await mealCollection.findOne({ _id: new ObjectId(mealId) });
 
         if (meal.likedUsers?.includes(email)) {
           return res.status(400).send({ message: "User already liked this meal." });
         }
 
-        
-        const updatedMeal = await mealCollection.updateOne(
+        await mealCollection.updateOne(
           { _id: new ObjectId(mealId) },
           {
-            $inc: { like: 1 }, 
-            $push: { likedUsers: email }, 
+            $inc: { likes: 1 }, // Increment the like count
+            $push: { likedUsers: email }, // Add user to likedUsers array
           }
         );
 
@@ -233,6 +213,8 @@ async function run() {
         res.status(500).send({ success: false, message: "Failed to like the meal." });
       }
     });
+
+
 
 
 
@@ -259,31 +241,43 @@ async function run() {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
 
-      const meal = await mealCollection.findOne(query);
-      if (!meal) {
-        return res.status(404).send({ message: "Meal not found" });
+      try {
+        const meal = await mealCollection.findOne(query);
+        if (!meal) {
+          return res.status(404).send({ message: "Meal not found" });
+        }
+
+        const updatedDoc = {
+          $push: { reviews: reviewText },
+          $inc: { reviews_count: 1 } // Increment review count
+        };
+
+        const result = await mealCollection.updateOne(query, updatedDoc);
+        res.send(result);
+      } catch (error) {
+        console.error("Error adding review:", error.message);
+        res.status(500).send({ error: "Internal Server Error" });
       }
-
-      const updatedDoc = {
-        $push: { reviews: reviewText }
-      };
-
-      const result = await mealCollection.updateOne(query, updatedDoc);
-      res.send(result);
     });
 
     app.get('/meal/reviews/:id', async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
 
-      const meal = await mealCollection.findOne(query);
-      if (!meal) {
-        return res.status(404).send({ message: "Meal not found" });
-      }
+      try {
+        const meal = await mealCollection.findOne(query);
+        if (!meal) {
+          return res.status(404).send({ message: "Meal not found" });
+        }
 
-      res.send({ reviews: meal.reviews || [] });
+        res.send({ reviews: meal.reviews || [], reviews_count: meal.reviews_count || 0 });
+      } catch (error) {
+        console.error("Error fetching reviews:", error.message);
+        res.status(500).send({ error: "Internal Server Error" });
+      }
     });
 
+    
     // packages api
     app.get('/packages', async (req, res) => {
       const result = await packageCollection.find().toArray()
@@ -309,8 +303,8 @@ async function run() {
 
 
     // payment(
-    app.post('/create-payment-intent', async(req, res) => {
-      const {price} = req.body
+    app.post('/create-payment-intent', async (req, res) => {
+      const { price } = req.body
       const amount = parseInt(price * 100)
       const paymentIntent = await stripe.paymentIntents.create({
         amount: amount,
