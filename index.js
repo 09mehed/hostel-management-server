@@ -123,6 +123,31 @@ async function run() {
       res.send(result)
     })
 
+    app.get('/meal', async (req, res) => {
+      const { search, category, price } = req.query;
+
+      const query = {};
+      if (search) {
+        query.title = { $regex: search, $options: 'i' }; 
+      }
+      if (category) {
+        query.category = category;
+      }
+      if (price) {
+        query.price = {};
+        if (price) query.price.$gte = parseFloat(price); 
+      }
+
+      try {
+        const meals = await mealCollection.find(query);
+        res.json(meals);
+      } catch (error) {
+        console.error('Error fetching meals:', error);
+        res.status(500).json({ message: 'Internal Server Error' });
+      }
+    });
+
+
     app.post('/meal', verifyToken, verifyAdmin, async (req, res) => {
       const item = req.body
       const result = await mealCollection.insertOne(item)
@@ -277,7 +302,36 @@ async function run() {
       }
     });
 
-    
+    app.get('/my-reviews', verifyToken, async (req, res) => {
+      const userEmail = req.query.email;
+      try {
+        const reviews = await mealCollection.aggregate([
+          {
+            $match: {
+              distributor: userEmail,
+            }
+          },
+          {
+            $project: {
+              title: 1,
+              likes: 1,
+              reviews: 1,
+            }
+          }
+        ]).toArray();
+
+        res.send(reviews);
+        console.log(reviews);
+      } catch (error) {
+        console.error("Error fetching reviews:", error);
+        res.status(500).send({ message: 'Error fetching user reviews' });
+      }
+    });
+
+
+
+
+
     // packages api
     app.get('/packages', async (req, res) => {
       const result = await packageCollection.find().toArray()
