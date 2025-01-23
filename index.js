@@ -54,6 +54,8 @@ async function run() {
     const mealCollection = client.db('hostelDB').collection('meals')
     const packageCollection = client.db('hostelDB').collection('packages')
     const requestCollection = client.db('hostelDB').collection('requests')
+    const upcomingMealsCollection = client.db("your_database_name").collection("upcomingMeals");
+
 
     // verify admin
     const verifyAdmin = async (req, res, next) => {
@@ -124,22 +126,23 @@ async function run() {
     })
 
     app.get('/meal', async (req, res) => {
-      const { search, category, price } = req.query;
-
-      const query = {};
+      const search = req.query?.search;
+      const category = req.query?.category;
+      const price = req.query?.price;
+      let query = {};
       if (search) {
-        query.title = { $regex: search, $options: 'i' }; 
+        query.title = { $regex: search, $options: 'i' };
       }
       if (category) {
         query.category = category;
       }
       if (price) {
         query.price = {};
-        if (price) query.price.$gte = parseFloat(price); 
+        if (price) query.price.$gte = parseFloat(price);
       }
 
       try {
-        const meals = await mealCollection.find(query);
+        const meals = await mealCollection.find(query).toArray();
         res.json(meals);
       } catch (error) {
         console.error('Error fetching meals:', error);
@@ -239,6 +242,81 @@ async function run() {
       }
     });
 
+    app.get('/upcoming-meals', async (req, res) => {
+      try {
+        const upcomingMeals = await upcomingMealsCollection
+          .find({})
+          .sort({ likes: -1 }) // Sort by descending likes count
+          .toArray();
+
+        res.send(upcomingMeals);
+      } catch (error) {
+        console.error("Error fetching upcoming meals:", error);
+        res.status(500).send({ message: 'Internal Server Error' });
+      }
+    });
+
+    app.patch('/upcoming-meals/like/:mealId', async (req, res) => {
+      const mealId = req.params.mealId;
+      const userId = req.body.userId; // Assuming you have user authentication
+
+      try {
+        const meal = await upcomingMealsCollection.findOne({ _id: new ObjectId(mealId) });
+
+        if (!meal) {
+          return res.status(404).send({ message: 'Meal not found' });
+        }
+
+        if (!meal.likedUsers?.includes(userId)) {
+          await upcomingMealsCollection.updateOne(
+            { _id: new ObjectId(mealId) },
+            { $inc: { likes: 1 }, $push: { likedUsers: userId } }
+          );
+          return res.send({ message: 'Meal liked successfully' });
+        } else {
+          return res.status(400).send({ message: 'User has already liked this meal' });
+        }
+      } catch (error) {
+        console.error("Error liking meal:", error);
+        res.status(500).send({ message: 'Internal Server Error' });
+      }
+    });
+
+    app.patch('/upcoming-meals/publish/:mealId', async (req, res) => {
+      const mealId = req.params.mealId;
+
+      try {
+        const meal = await upcomingMealsCollection.findOne({ _id: new ObjectId(mealId) });
+
+        if (!meal) {
+          return res.status(404).send({ message: 'Meal not found' });
+        }
+
+        // Remove from upcomingMeals
+        await upcomingMealsCollection.deleteOne({ _id: new ObjectId(mealId) });
+
+        // Add to mealsCollection (replace with your actual logic)
+        await mealsCollection.insertOne(meal);
+
+        res.send({ message: 'Meal published successfully' });
+      } catch (error) {
+        console.error("Error publishing meal:", error);
+        res.status(500).send({ message: 'Internal Server Error' });
+      }
+    });
+
+    app.post('/upcoming-meals', async (req, res) => {
+      const newMeal = req.body;
+
+      try {
+        const result = await upcomingMealsCollection.insertOne(newMeal);
+        res.status(201).send(result);
+      } catch (error) {
+        console.error("Error adding new upcoming meal:", error);
+        res.status(500).send({ message: 'Internal Server Error' });
+      }
+    });
+
 
 
 
@@ -260,6 +338,29 @@ async function run() {
       const result = await requestCollection.find(query).toArray()
       res.send(result)
     })
+
+    app.patch('/request/status/:id', verifyToken, verifyAdmin, async (req, res) => {
+      const { id } = req.params;
+      const { status } = req.body;
+
+      try {
+        const meal = await requestCollection.findOne({ _id: new ObjectId(id) });
+
+        if (!meal) {
+          return res.status(404).send({ message: 'Meal not found' });
+        }
+
+        const updatedMeal = await requestCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: status } }
+        );
+
+        res.send({ success: true, message: 'Meal status updated', updatedMeal });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: 'Error updating meal status' });
+      }
+    });
 
     app.post('/meal/review/:id', verifyToken, async (req, res) => {
       const { reviewText } = req.body;
@@ -328,10 +429,44 @@ async function run() {
       }
     });
 
+    app.get('/reviews', async (req, res) => {
+      try {
+        const reviews = await mealCollection.aggregate([
+          {
+            $project: {
+              title: 1, // Meal title
+              reviews: 1, // All reviews
+              reviews_count: { $size: { $ifNull: ["$reviews", []] } } // Review count
+            }
+          }
+        ]).toArray();
 
+        res.status(200).json({ success: true, data: reviews });
+      } catch (error) {
+        console.error("Error fetching reviews:", error.message);
+        res.status(500).json({ success: false, message: "Failed to fetch reviews." });
+      }
+    });
 
+    app.get('/reviews/:id', async (req, res) => {
+      const { id } = req.params;
+      try {
+        const meal = await mealCollection.findOne({ _id: new ObjectId(id) });
 
+        if (!meal) {
+          return res.status(404).json({ success: false, message: "Meal not found." });
+        }
 
+        res.status(200).json({
+          success: true,
+          reviews: meal.reviews || [],
+          reviews_count: meal.reviews?.length || 0
+        });
+      } catch (error) {
+        console.error("Error fetching reviews for meal:", error.message);
+        res.status(500).json({ success: false, message: "Failed to fetch meal reviews." });
+      }
+    });
     // packages api
     app.get('/packages', async (req, res) => {
       const result = await packageCollection.find().toArray()
@@ -353,8 +488,6 @@ async function run() {
       }
       res.send(result);
     });
-
-
 
     // payment(
     app.post('/create-payment-intent', async (req, res) => {
