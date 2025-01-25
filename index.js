@@ -1,10 +1,10 @@
 const express = require('express')
 const cors = require('cors')
 require('dotenv').config()
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cookieParser = require('cookie-parser')
 const jwt = require('jsonwebtoken')
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const app = express()
 const port = process.env.PORT || 5000
 
@@ -54,7 +54,8 @@ async function run() {
     const mealCollection = client.db('hostelDB').collection('meals')
     const packageCollection = client.db('hostelDB').collection('packages')
     const requestCollection = client.db('hostelDB').collection('requests')
-    const upcomingMealsCollection = client.db("your_database_name").collection("upcomingMeals");
+    const upcomingMealsCollection = client.db("hostelDB").collection("upcomingMeals");
+    const paymentCollection = client.db('hostelDB').collection('payment')
 
 
     // verify admin
@@ -492,15 +493,30 @@ async function run() {
     // payment(
     app.post('/create-payment-intent', async (req, res) => {
       const { price } = req.body
-      const amount = parseInt(price * 100)
+      const amount = Math.round(price * 100);
       const paymentIntent = await stripe.paymentIntents.create({
-        amount: amount,
+        amount,
         currency: 'usd',
         payment_method_types: ['card']
       })
       res.send({
         clientSecret: paymentIntent.client_secret,
       })
+    })
+
+    app.post('/payment', async(req, res) => {
+      const payment = req.body
+      const paymentResult = await paymentCollection.insertOne(payment)
+      res.send(paymentResult)
+    })
+
+    app.get('/payment',verifyToken, async(req, res) => {
+      const query = req.params.email
+      if(req.params.email !== req.decoded.email){
+        return res.status(403).send({message: 'forbidden access'})
+      }
+      const result = await paymentCollection.find(query).toArray()
+      res.send(result)
     })
 
     // Generate jwt token
