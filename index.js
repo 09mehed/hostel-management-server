@@ -8,7 +8,14 @@ const jwt = require('jsonwebtoken')
 const app = express()
 const port = process.env.PORT || 5000
 
-app.use(cors())
+app.use(cors({
+  origin: [
+    'http://localhost:5173',
+    'https://assignment-12-d576a.web.app',
+    'https://assignment-12-d576a.firebaseapp.com',
+  ],
+  credentials: true,
+}))
 app.use(express.json())
 app.use(cookieParser())
 
@@ -493,7 +500,7 @@ async function run() {
     // payment(
     app.post('/create-payment-intent', async (req, res) => {
       const { price } = req.body
-      const amount = Math.round(price * 100);
+      const amount = parseInt(price * 100);
       const paymentIntent = await stripe.paymentIntents.create({
         amount,
         currency: 'usd',
