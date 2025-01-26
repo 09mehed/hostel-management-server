@@ -11,33 +11,23 @@ const port = process.env.PORT || 5000
 app.use(cors({
   origin: [
     'http://localhost:5173',
-    'https://hostel-managment-b7c1d.web.app',
-    'https://hostel-managment-b7c1d.firebaseapp.com',
+    'https://assignment-12-d576a.firebaseapp.com',
+    'https://assignment-12-d576a.web.app',
   ],
   credentials: true,
 }))
+// app.options('*', cors({
+//   origin: [
+//     'http://localhost:5173',
+//     'https://assignment-12-d576a.firebaseapp.com',
+//     'https://assignment-12-d576a.web.app',
+//   ],
+//   credentials: true,
+// }));
 app.use(express.json())
 app.use(cookieParser())
 
-const verifyToken = async (req, res, next) => {
-  if (!req.headers.authorization) {
-    return res.status(401).send({ message: 'forbidden access' })
-  }
 
-  const token = req.headers.authorization.split(' ')[1]
-  if (!token) {
-    console.log('Token missing in authorization header');
-    return res.status(401).send({ message: 'forbidden access' });
-  }
-  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
-    if (err) {
-      console.log(err)
-      return res.status(401).send({ message: 'unauthorized access' })
-    }
-    req.decoded = decoded
-    next()
-  })
-}
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.wt1dm.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -53,9 +43,9 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
 
     const usersCollection = client.db('hostelDB').collection('users')
     const mealCollection = client.db('hostelDB').collection('meals')
@@ -74,6 +64,26 @@ async function run() {
         return res.status(401).status({ message: 'forbidden access' })
       }
       next()
+    }
+
+    const verifyToken = (req, res, next) => {
+      if (!req.headers.authorization) {
+        return res.status(401).send({ message: 'forbidden access' })
+      }
+
+      const token = req.headers.authorization.split(' ')[1]
+      if (!token) {
+        console.log('Token missing in authorization header');
+        return res.status(401).send({ message: 'forbidden access' });
+      }
+      jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+        if (err) {
+          console.log(err)
+          return res.status(401).send({ message: 'unauthorized access' })
+        }
+        req.decoded = decoded
+        next()
+      })
     }
 
 
@@ -117,6 +127,7 @@ async function run() {
       if (user) {
         admin = user?.role === 'admin'
       }
+      console.log("admin", admin);
       res.send({ admin })
     })
 
@@ -347,19 +358,19 @@ async function run() {
       res.send(result)
     })
 
-    app.patch('/request/status/:id', verifyToken, verifyAdmin, async (req, res) => {
-      const { id } = req.params;
-      const { status } = req.body;
+    app.patch('/request/status/:mealId', verifyToken, verifyAdmin, async (req, res) => {
+      const mealId = req.params.mealId;
+      const status = req.body.status;
 
       try {
-        const meal = await requestCollection.findOne({ _id: new ObjectId(id) });
+        const meal = await requestCollection.findOne({ _id: new ObjectId(mealId) });
 
         if (!meal) {
           return res.status(404).send({ message: 'Meal not found' });
         }
 
         const updatedMeal = await requestCollection.updateOne(
-          { _id: new ObjectId(id) },
+          { _id: new ObjectId(mealId) },
           { $set: { status: status } }
         );
 
@@ -369,6 +380,7 @@ async function run() {
         res.status(500).send({ message: 'Error updating meal status' });
       }
     });
+
 
     app.post('/meal/review/:id', verifyToken, async (req, res) => {
       const { reviewText } = req.body;
@@ -383,7 +395,7 @@ async function run() {
 
         const updatedDoc = {
           $push: { reviews: reviewText },
-          $inc: { reviews_count: 1 } // Increment review count
+          $inc: { reviews_count: 1 } 
         };
 
         const result = await mealCollection.updateOne(query, updatedDoc);
@@ -442,9 +454,9 @@ async function run() {
         const reviews = await mealCollection.aggregate([
           {
             $project: {
-              title: 1, // Meal title
-              reviews: 1, // All reviews
-              reviews_count: { $size: { $ifNull: ["$reviews", []] } } // Review count
+              title: 1, 
+              reviews: 1, 
+              reviews_count: { $size: { $ifNull: ["$reviews", []] } } 
             }
           }
         ]).toArray();
@@ -475,6 +487,7 @@ async function run() {
         res.status(500).json({ success: false, message: "Failed to fetch meal reviews." });
       }
     });
+
     // packages api
     app.get('/packages', async (req, res) => {
       const result = await packageCollection.find().toArray()
@@ -500,9 +513,10 @@ async function run() {
     // payment(
     app.post('/create-payment-intent', async (req, res) => {
       const { price } = req.body
+      console.log(price);
       const amount = parseInt(price * 100);
       const paymentIntent = await stripe.paymentIntents.create({
-        amount,
+        amount: amount,
         currency: 'usd',
         payment_method_types: ['card']
       })
@@ -511,21 +525,25 @@ async function run() {
       })
     })
 
-    app.post('/payment', async(req, res) => {
+    app.post('/payment', async (req, res) => {
       const payment = req.body
       const paymentResult = await paymentCollection.insertOne(payment)
       res.send(paymentResult)
     })
 
-    app.get('/payment',verifyToken, async(req, res) => {
-      const query = req.params.email
-      if(req.params.email !== req.decoded.email){
-        return res.status(403).send({message: 'forbidden access'})
+    app.get('/payment', verifyToken, async (req, res) => {
+      const email = req.query.email;
+      if (email !== req.decoded.email) {
+        return res.status(403).send({ message: 'Forbidden access' });
       }
-      const result = await paymentCollection.find(query).toArray()
-      res.send(result)
-    })
-
+      try {
+        const result = await paymentCollection.find({ email: email }).toArray();
+        res.send(result);
+      } catch (error) {
+        console.error('Error fetching payments:', error);
+        res.status(500).send({ message: 'Error fetching payments' });
+      }
+    });
     // Generate jwt token
     app.post('/jwt', async (req, res) => {
       const user = req.body
