@@ -127,7 +127,6 @@ async function run() {
       if (user) {
         admin = user?.role === 'admin'
       }
-      console.log("admin", admin);
       res.send({ admin })
     })
 
@@ -183,6 +182,19 @@ async function run() {
       res.send(result)
     })
 
+    app.get('/meals', async (req, res) => {
+      const { sortField = 'likes', sortOrder = 'desc' } = req.query; // ডিফল্ট sortField: likes, sortOrder: desc
+      const sortOption = { [sortField]: sortOrder === 'asc' ? 1 : -1 };
+
+      try {
+        const meals = await mealCollection.find().sort(sortOption).toArray();
+        res.send(meals);
+      } catch (error) {
+        console.error("Error fetching meals:", error);
+        res.status(500).send({ message: "Server error while fetching meals" });
+      }
+    });
+
     app.get('/meal/:id', async (req, res) => {
       const id = req.params.id
       const query = { _id: new ObjectId(id) }
@@ -192,27 +204,46 @@ async function run() {
 
     app.get('/upcoming-meals', async (req, res) => {
       const currentDate = new Date();
-      const query = { publishDate: { $gt: currentDate } }; // Meals with future publishDate
+      const query = { publishDate: { $gt: currentDate } };
       const result = await mealCollection.find(query).toArray();
       res.send(result);
     });
 
     app.get('/meal', async (req, res) => {
-      const { search = '', category = '', minPrice = 0, maxPrice = Infinity } = req.query;
+      const search = req.query?.search
+      const category = req.query?.category
+      const minPrice = req.query?.minPrice
 
       try {
-        const meals = await mealCollection.find({
-          name: { $regex: search, $options: 'i' },
-          category: category ? category : { $exists: true },
-          price: { $gte: parseFloat(minPrice), $lte: parseFloat(maxPrice) }
-        }).toArray();
+        // Query Object
+        let query = {};
 
-        res.status(200).json(meals);
+        // Search Filter (Title)
+        if (search) {
+          query.title = { $regex: search, $options: 'i' }; // Case-insensitive search
+        }
+
+        // Category Filter
+        if (category) {
+          query.category = category; // Exact match for category
+        }
+
+        // Price Range Filter
+        if (minPrice) {
+          query.price = {
+            $gte: parseFloat(minPrice), // Minimum Price
+          };
+        }
+
+        console.log('Query:', query); // Debugging Purpose
+        const meals = await mealCollection.find(query).toArray(); // Fetch Meals
+        res.status(200).send(meals);
       } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Error fetching meals" });
+        console.error('Error fetching meals:', error);
+        res.status(500).json({ message: 'Error fetching meals' });
       }
     });
+
 
     app.get('/meal/like/:id', verifyToken, async (req, res) => {
       const mealId = req.params.id;
@@ -358,6 +389,13 @@ async function run() {
       res.send(result)
     })
 
+    // Express route to delete a meal by its ID
+    app.delete('/student-order/:mealId', async (req, res) => {
+      const { mealId } = req.params;
+      const result = await requestCollection.deleteOne({ _id : new ObjectId (mealId)});
+      res.send(result)
+    });
+
     app.patch('/request/status/:mealId', verifyToken, verifyAdmin, async (req, res) => {
       const mealId = req.params.mealId;
       const status = req.body.status;
@@ -395,7 +433,7 @@ async function run() {
 
         const updatedDoc = {
           $push: { reviews: reviewText },
-          $inc: { reviews_count: 1 } 
+          $inc: { reviews_count: 1 }
         };
 
         const result = await mealCollection.updateOne(query, updatedDoc);
@@ -425,11 +463,12 @@ async function run() {
 
     app.get('/my-reviews', verifyToken, async (req, res) => {
       const userEmail = req.query.email;
+      console.log(userEmail);
       try {
         const reviews = await mealCollection.aggregate([
           {
             $match: {
-              distributor: userEmail,
+              email: userEmail,
             }
           },
           {
@@ -454,9 +493,9 @@ async function run() {
         const reviews = await mealCollection.aggregate([
           {
             $project: {
-              title: 1, 
-              reviews: 1, 
-              reviews_count: { $size: { $ifNull: ["$reviews", []] } } 
+              title: 1,
+              reviews: 1,
+              reviews_count: { $size: { $ifNull: ["$reviews", []] } }
             }
           }
         ]).toArray();
