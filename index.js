@@ -143,31 +143,6 @@ async function run() {
       res.send(result)
     })
 
-    app.get('/meal', async (req, res) => {
-      const search = req.query?.search;
-      const category = req.query?.category;
-      const price = req.query?.price;
-      let query = {};
-      if (search) {
-        query.title = { $regex: search, $options: 'i' };
-      }
-      if (category) {
-        query.category = category;
-      }
-      if (price) {
-        query.price = {};
-        if (price) query.price.$gte = parseFloat(price);
-      }
-
-      try {
-        const meals = await mealCollection.find(query).toArray();
-        res.json(meals);
-      } catch (error) {
-        console.error('Error fetching meals:', error);
-        res.status(500).json({ message: 'Internal Server Error' });
-      }
-    });
-
 
     app.post('/meal', verifyToken, verifyAdmin, async (req, res) => {
       const item = req.body
@@ -183,7 +158,7 @@ async function run() {
     })
 
     app.get('/meals', async (req, res) => {
-      const { sortField = 'likes', sortOrder = 'desc' } = req.query; // ডিফল্ট sortField: likes, sortOrder: desc
+      const { sortField = 'likes', sortOrder = 'desc' } = req.query;
       const sortOption = { [sortField]: sortOrder === 'asc' ? 1 : -1 };
 
       try {
@@ -209,35 +184,33 @@ async function run() {
       res.send(result);
     });
 
-    app.get('/meal', async (req, res) => {
+    app.get('/searchMeal', async (req, res) => {
       const search = req.query?.search
       const category = req.query?.category
       const minPrice = req.query?.minPrice
-
       try {
         // Query Object
         let query = {};
 
         // Search Filter (Title)
         if (search) {
-          query.title = { $regex: search, $options: 'i' }; // Case-insensitive search
+          query.title = { $regex: search, $options: 'i' };
         }
 
         // Category Filter
         if (category) {
-          query.category = category; // Exact match for category
+          query.category = { $regex: category, $options: 'i' }; 
         }
 
         // Price Range Filter
         if (minPrice) {
           query.price = {
-            $gte: parseFloat(minPrice), // Minimum Price
+            $gte: parseFloat(minPrice), 
           };
         }
 
-        console.log('Query:', query); // Debugging Purpose
-        const meals = await mealCollection.find(query).toArray(); // Fetch Meals
-        res.status(200).send(meals);
+        const meals = await mealCollection.find(query).toArray(); 
+        res.send(meals);
       } catch (error) {
         console.error('Error fetching meals:', error);
         res.status(500).json({ message: 'Error fetching meals' });
@@ -540,9 +513,9 @@ async function run() {
       res.send(result)
     })
 
-    app.get('/packages/:packageName', async (req, res) => {
-      const { packageName } = req.params;
-      const result = await packageCollection.findOne({ name: packageName });
+    app.get('/packages/:packageName', verifyToken, async (req, res) => {
+      const { membership } = req.params;
+      const result = await packageCollection.findOne({ name: membership });
       if (!result) {
         return res.status(404).send({ message: 'Package not found' });
       }
@@ -552,7 +525,6 @@ async function run() {
     // payment(
     app.post('/create-payment-intent', async (req, res) => {
       const { price } = req.body
-      console.log(price);
       const amount = parseInt(price * 100);
       const paymentIntent = await stripe.paymentIntents.create({
         amount: amount,
