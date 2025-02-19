@@ -16,14 +16,6 @@ app.use(cors({
   ],
   credentials: true,
 }))
-// app.options('*', cors({
-//   origin: [
-//     'http://localhost:5173',
-//     'https://assignment-12-d576a.firebaseapp.com',
-//     'https://assignment-12-d576a.web.app',
-//   ],
-//   credentials: true,
-// }));
 app.use(express.json())
 app.use(cookieParser())
 
@@ -177,13 +169,6 @@ async function run() {
       res.send(result)
     })
 
-    app.get('/upcoming-meals', async (req, res) => {
-      const currentDate = new Date();
-      const query = { publishDate: { $gt: currentDate } };
-      const result = await mealCollection.find(query).toArray();
-      res.send(result);
-    });
-
     app.get('/searchMeal', async (req, res) => {
       const search = req.query?.search
       const category = req.query?.category
@@ -225,11 +210,11 @@ async function run() {
       try {
         const meal = await mealCollection.findOne({
           _id: new ObjectId(mealId),
-          likedUsers: { $in: [email] }, // Check if user already liked
+          likedUsers: { $in: [email] },
         });
 
         if (meal) {
-          return res.send({ liked: true }); // User has already liked
+          return res.send({ liked: true });
         }
 
         res.send({ liked: false });
@@ -253,8 +238,8 @@ async function run() {
         await mealCollection.updateOne(
           { _id: new ObjectId(mealId) },
           {
-            $inc: { likes: 1 }, // Increment the like count
-            $push: { likedUsers: email }, // Add user to likedUsers array
+            $inc: { likes: 1 }, 
+            $push: { likedUsers: email },
           }
         );
 
@@ -264,85 +249,6 @@ async function run() {
         res.status(500).send({ success: false, message: "Failed to like the meal." });
       }
     });
-
-    app.get('/upcoming-meals', async (req, res) => {
-      try {
-        const upcomingMeals = await upcomingMealsCollection
-          .find({})
-          .sort({ likes: -1 }) // Sort by descending likes count
-          .toArray();
-
-        res.send(upcomingMeals);
-      } catch (error) {
-        console.error("Error fetching upcoming meals:", error);
-        res.status(500).send({ message: 'Internal Server Error' });
-      }
-    });
-
-    app.patch('/upcoming-meals/like/:mealId', async (req, res) => {
-      const mealId = req.params.mealId;
-      const userId = req.body.userId; // Assuming you have user authentication
-
-      try {
-        const meal = await upcomingMealsCollection.findOne({ _id: new ObjectId(mealId) });
-
-        if (!meal) {
-          return res.status(404).send({ message: 'Meal not found' });
-        }
-
-        if (!meal.likedUsers?.includes(userId)) {
-          await upcomingMealsCollection.updateOne(
-            { _id: new ObjectId(mealId) },
-            { $inc: { likes: 1 }, $push: { likedUsers: userId } }
-          );
-          return res.send({ message: 'Meal liked successfully' });
-        } else {
-          return res.status(400).send({ message: 'User has already liked this meal' });
-        }
-      } catch (error) {
-        console.error("Error liking meal:", error);
-        res.status(500).send({ message: 'Internal Server Error' });
-      }
-    });
-
-    app.patch('/upcoming-meals/publish/:mealId', async (req, res) => {
-      const mealId = req.params.mealId;
-
-      try {
-        const meal = await upcomingMealsCollection.findOne({ _id: new ObjectId(mealId) });
-
-        if (!meal) {
-          return res.status(404).send({ message: 'Meal not found' });
-        }
-
-        // Remove from upcomingMeals
-        await upcomingMealsCollection.deleteOne({ _id: new ObjectId(mealId) });
-
-        // Add to mealsCollection (replace with your actual logic)
-        await mealsCollection.insertOne(meal);
-
-        res.send({ message: 'Meal published successfully' });
-      } catch (error) {
-        console.error("Error publishing meal:", error);
-        res.status(500).send({ message: 'Internal Server Error' });
-      }
-    });
-
-    app.post('/upcoming-meals', async (req, res) => {
-      const newMeal = req.body;
-
-      try {
-        const result = await upcomingMealsCollection.insertOne(newMeal);
-        res.status(201).send(result);
-      } catch (error) {
-        console.error("Error adding new upcoming meal:", error);
-        res.status(500).send({ message: 'Internal Server Error' });
-      }
-    });
-
-
-
-
 
     app.post('/request', verifyToken, async (req, res) => {
       const requestInfo = req.body
